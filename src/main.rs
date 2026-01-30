@@ -24,6 +24,15 @@ struct AppState {
     packages: DashMap<String, Vec<u8>>,
 }
 
+// 辅助函数：截断tag用于日志显示
+fn truncate_tag(tag: &str, max_len: usize) -> String {
+    if tag.len() <= max_len {
+        tag.to_string()
+    } else {
+        format!("{}...", &tag[..max_len])
+    }
+}
+
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let app_config: AppConfig = serde_json::from_str(std::fs::read_to_string("config.json").expect("读取配置文件失败").as_str()).expect("解析配置文件失败");
@@ -39,10 +48,10 @@ async fn main() -> io::Result<()> {
         while let Some(msg) = rx.recv().await {
             match dispatch_to_redis(&redis_client_clone, &msg).await {
                 Ok(_) => {
-                    println!("[{}] 分发到 Redis 成功，ID: {}", msg.tag, msg.id);
+                    println!("[{}] 分发到 Redis 成功，ID: {}", truncate_tag(&msg.tag, 30), msg.id);
                 }
                 Err(e) => {
-                    eprintln!("[{}] 分发到 Redis 失败，ID: {}，错误: {}", msg.tag, msg.id, e);
+                    eprintln!("[{}] 分发到 Redis 失败，ID: {}，错误: {}", truncate_tag(&msg.tag, 30), msg.id, e);
                 }
             }
         }
@@ -96,7 +105,13 @@ async fn main() -> io::Result<()> {
                     
                     // 然后取出完整数据
                     if let Some((_, data)) = state.packages.remove(&id){
-                        println!("[{}] 数据块接收完成，总大小: {} bytes，ID: {}", package.tag, data.len(), id);
+                        // 跳过空数据
+                        if data.len() == 0 {
+                            continue;
+                        }
+                        
+                        let display_tag = truncate_tag(&package.tag, 30);
+                        println!("[{}] 数据接收完成: {} bytes，ID: {}", display_tag, data.len(), id);
                         match serde_json::from_slice::<serde_json::Value>(&data) {
                             Ok(json_content) => {
                                 if let Err(e) = tx.send(SaveMessage {
@@ -108,18 +123,18 @@ async fn main() -> io::Result<()> {
                                 }).await {
                                     eprintln!("[!] 发送到队列失败: {}", e);
                                 } else {
-                                    println!("[{}] 已发送到分发队列，ID: {}", package.tag, id);
+                                    println!("[{}] 已发送到分发队列，ID: {}", display_tag, id);
                                 }
                             }
-                            Err(e) => {
-                                eprintln!("[!] 解析 JSON 失败: {}", e);
+                            Err(_e) => {
+                                // JSON 解析失败是预期中的，不是目标数据，不打印日志
                             }
                         }
                     }
                 } else {
                     // 不是 EOF，继续累积数据
                     state.packages.entry(id).or_default().extend_from_slice(&package.payload);
-                    println!("[{}] 接受数据块中: {} bytes", package.tag, package.payload.len());
+                    println!("[{}] 接收数据块中: {} bytes", truncate_tag(&package.tag, 30), package.payload.len());
                 }
             }
         });
