@@ -37,10 +37,14 @@ async fn main() -> io::Result<()> {
     let redis_client_clone = redis_client.clone();
     tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
-            if let Err(e) = dispatch_to_redis(&redis_client_clone, &msg).await {
-                eprintln!("分发到 Redis 失败: {}", e);
+            match dispatch_to_redis(&redis_client_clone, &msg).await {
+                Ok(_) => {
+                    println!("[{}] 分发到 Redis 成功，ID: {}", msg.tag, msg.id);
+                }
+                Err(e) => {
+                    eprintln!("[{}] 分发到 Redis 失败，ID: {}，错误: {}", msg.tag, msg.id, e);
+                }
             }
-            println!("[{}] 分发到 Redis 成功，ID: {}", msg.tag, msg.id);
         }
     });
 
@@ -50,10 +54,13 @@ async fn main() -> io::Result<()> {
         packages: DashMap::new(),
     });
 
+    let auth_key = app_config.auth_key.clone();
+
     // 绑定监听tcp
     let host = app_config.listener.host.clone();
     let port = app_config.listener.port;
     let listener = TcpListener::bind(format!("{}:{}", host, port)).await?;
+    println!("[*] 使用认证密钥: {}", auth_key);
     println!("[*] Rust Codec Server 运行中...");
     println!("[*] 监听地址: {}:{}", host, port);
 
@@ -64,12 +71,14 @@ async fn main() -> io::Result<()> {
         let state = Arc::clone(&state);
         // 获取一个发送者的克隆
         let tx = tx.clone();
+        // 获取魔术数字
+        let auth_key = app_config.auth_key.clone();
 
         // 这里的异步协程用于处理每个连接，将接收到内容组包、校验、发送到缓存队列
         tokio::spawn(async move {
 
             // 定义一个基于codec的framed流
-            let mut framed = Framed::new(stream, ProtocolCodec::new("MAGIC".to_string()));
+            let mut framed = Framed::new(stream, ProtocolCodec::new(&auth_key));
 
             // 一个粘包完成
             while let Some(Ok(package)) = framed.next().await {
@@ -104,7 +113,6 @@ async fn main() -> io::Result<()> {
                             }
                             Err(e) => {
                                 eprintln!("[!] 解析 JSON 失败: {}", e);
-                                eprintln!("[!] 原始数据: {}", String::from_utf8_lossy(&data));
                             }
                         }
                     }

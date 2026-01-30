@@ -7,8 +7,8 @@ pub struct ProtocolCodec {
 }
 
 impl ProtocolCodec {
-    pub fn new(magic_key: String) -> Self {
-        let mut key_bytes = magic_key.into_bytes();
+    pub fn new(magic_key: &String) -> Self {
+        let mut key_bytes = magic_key.as_bytes().to_vec();
         // 确保 magic_key 正好是 4 字节
         key_bytes.truncate(4);  // 截取前4字节
         while key_bytes.len() < 4 {

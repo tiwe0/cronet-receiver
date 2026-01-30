@@ -1,5 +1,5 @@
 {
-    "auth_key": "my_secret_key",
+    "auth_key": "i0v0",
     "listener": {
         "host": "0.0.0.0",
         "port": 9000
