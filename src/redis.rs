@@ -34,12 +34,11 @@ pub async fn setup_redis(app_config: &AppConfig) -> Result<Client, Error> {
     Ok(client)
 }
 
-pub async fn dispatch_to_redis(client: &Client, message: &SaveMessage) -> anyhow::Result<()> {
-    let stream_key = format!("dispatch:{}:{}:{}", message.tag_app, message.tag_url, message.id);
+pub async fn dispatch_to_redis(client: &Client, key: String, message: &SaveMessage) -> anyhow::Result<()> {
     let json_data = serde_json::to_string(&message.data)?;
 
     let _: () = client.xadd(
-        stream_key,
+        key,
         false,
         ("MAXLEN", "~", 1000),
         "*",

@@ -9,7 +9,12 @@
         "port": 6379
     },
     "route_table": {
-        "app1": "handler1",
-        "app2": "handler2"
+        "enabled": true,
+        "entries": [
+            {
+                "pattern": "com.xingin.xhs|https://edith.xiaohongshu.com/api/(.*)",
+                "target": "xhs:{1}"
+            }
+        ]
     }
 }

@@ -28,6 +28,7 @@
 - ✅ **Redis Stream 存储**：数据持久化到 Redis Stream
 - ✅ **防扫描机制**：Magic Number 校验防止随机扫描
 - ✅ **粘包处理**：内置 Codec 自动处理 TCP 粘包问题
+- ✅ **路由表转发**：基于正则表达式的灵活路由匹配与转发
 
 ## 🏗️ 架构设计
 
@@ -96,9 +97,14 @@
            "host": "localhost",
            "port": 6379
        },
-       "route_table": { // 尚未实现
-           "app1": "handler1",
-           "app2": "handler2"
+       "route_table": {
+           "enabled": true,
+           "entries": [
+               {
+                   "pattern": "com.example.app|https://api.example.com/api/(.*)",
+                   "target": "example:{1}"
+               }
+           ]
        }
    }
    ```
@@ -143,8 +149,80 @@ cargo run
 ```
 [*] 成功连接到 Redis 服务器
 [*] Redis 地址: localhost:6379
+[*] 使用认证密钥: i0v0
 [*] Rust Codec Server 运行中...
 [*] 监听地址: 0.0.0.0:9000
+```
+
+### 路由表配置
+
+路由表支持基于正则表达式的灵活匹配和转发规则。
+
+#### 配置结构
+
+```json
+{
+    "route_table": {
+        "enabled": true,          // 是否启用路由表
+        "entries": [              // 路由规则数组
+            {
+                "pattern": "包名|URL正则表达式",
+                "target": "目标Stream:{1}"
+            }
+        ]
+    }
+}
+```
+
+#### 匹配规则
+
+- **pattern**: 格式为 `包名|URL正则表达式`
+  - 包名部分匹配 `TagPackage` 字段
+  - URL 部分支持正则表达式匹配 `TagUrl` 字段
+  - 正则捕获组用 `()` 标记，可在 target 中引用
+
+- **target**: 目标 Redis Stream 名称
+  - 使用 `{0}` 引用完整匹配
+  - 使用 `{1}`, `{2}` 等引用捕获组
+
+#### 配置示例
+
+```json
+{
+    "route_table": {
+        "enabled": true,
+        "entries": [
+            {
+                "pattern": "com.xingin.xhs|https://edith.xiaohongshu.com/api/(.*)",
+                "target": "xhs:{1}"
+            },
+            {
+                "pattern": "com.example.app|https://api.example.com/v1/(user|post)/(.*)",
+                "target": "api:{1}:{2}"
+            }
+        ]
+    }
+}
+```
+
+#### 路由行为
+
+- **启用路由表** (`enabled: true`)
+  - 匹配成功：转发到对应的 Redis Stream
+  - 匹配失败：丢弃数据包
+  
+- **禁用路由表** (`enabled: false`)
+  - 所有数据转发到默认 Stream：`default:{TagUrl}`
+
+- **未配置路由表**
+  - 丢弃所有数据包
+
+#### 运行日志示例
+
+```
+[app1] 路由到目标: xhs:sns/v1/user/info
+[app1] 分发到 Redis 成功，ID: abc123
+[app2] 启用路由表，丢弃信息
 ```
 
 ## 🤝 贡献指南

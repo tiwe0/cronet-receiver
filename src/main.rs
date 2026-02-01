@@ -24,14 +24,7 @@ struct AppState {
     packages: DashMap<String, Vec<u8>>,
 }
 
-// 辅助函数：截断tag用于日志显示
-fn truncate_tag(tag: &str, max_len: usize) -> String {
-    if tag.len() <= max_len {
-        tag.to_string()
-    } else {
-        format!("{}...", &tag[..max_len])
-    }
-}
+static TRUNCATE_LEN: usize = 50;
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
@@ -43,16 +36,27 @@ async fn main() -> io::Result<()> {
     let (tx, mut rx) = mpsc::channel::<SaveMessage>(1024);
     
     // 这个协程用于从队列中读取信息并分发
+    let route_table = app_config.route_table.clone();
     let redis_client_clone = redis_client.clone();
     tokio::spawn(async move {
+        let route_table = route_table;
         while let Some(msg) = rx.recv().await {
-            match dispatch_to_redis(&redis_client_clone, &msg).await {
-                Ok(_) => {
-                    println!("[{}] 分发到 Redis 成功，ID: {}", truncate_tag(&msg.tag, 30), msg.id);
+            if let Some(route_table) = &route_table {
+                if let Some(target) = route_table.find_target(&msg.tag_url) {
+                    println!("[{}] 路由到目标: {}", truncate_tag(&msg.tag, TRUNCATE_LEN), target);
+                    match dispatch_to_redis(&redis_client_clone, target, &msg).await {
+                        Ok(_) => {
+                            println!("[{}] 分发到 Redis 成功，ID: {}", truncate_tag(&msg.tag, TRUNCATE_LEN), msg.id);
+                        }
+                        Err(e) => {
+                            eprintln!("[{}] 分发到 Redis 失败，ID: {}，错误: {}", truncate_tag(&msg.tag, TRUNCATE_LEN), msg.id, e);
+                        }
+                    }
+                } else {
+                    println!("[{}] 启用路由表，丢弃信息", truncate_tag(&msg.tag, TRUNCATE_LEN));
                 }
-                Err(e) => {
-                    eprintln!("[{}] 分发到 Redis 失败，ID: {}，错误: {}", truncate_tag(&msg.tag, 30), msg.id, e);
-                }
+            } else {
+                println!("[{}] 未配置路由表，丢弃信息", truncate_tag(&msg.tag, TRUNCATE_LEN));
             }
         }
     });
@@ -110,7 +114,7 @@ async fn main() -> io::Result<()> {
                             continue;
                         }
                         
-                        let display_tag = truncate_tag(&package.tag, 30);
+                        let display_tag = truncate_tag(&package.tag, TRUNCATE_LEN);
                         println!("[{}] 数据接收完成: {} bytes，ID: {}", display_tag, data.len(), id);
                         match serde_json::from_slice::<serde_json::Value>(&data) {
                             Ok(json_content) => {
@@ -134,10 +138,19 @@ async fn main() -> io::Result<()> {
                 } else {
                     // 不是 EOF，继续累积数据
                     state.packages.entry(id).or_default().extend_from_slice(&package.payload);
-                    println!("[{}] 接收数据块中: {} bytes", truncate_tag(&package.tag, 30), package.payload.len());
+                    println!("[{}] 接收数据块中: {} bytes", truncate_tag(&package.tag, TRUNCATE_LEN), package.payload.len());
                 }
             }
         });
     }
     Ok(())
+}
+
+// 辅助函数：截断tag用于日志显示
+fn truncate_tag(tag: &str, max_len: usize) -> String {
+    if tag.len() <= max_len {
+        tag.to_string()
+    } else {
+        format!("{}...", &tag[..max_len])
+    }
 }
