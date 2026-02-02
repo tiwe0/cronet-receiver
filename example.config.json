@@ -12,8 +12,8 @@
         "enabled": true,
         "entries": [
             {
-                "pattern": "com.example.app|https://app.example.com/api/(.*)",
-                "target": "app:key:{1}"
+                "pattern": "com.example.app|https://api.example.com/v1/(.*)",
+                "target": "example:v1:{1}"
             }
         ]
     }

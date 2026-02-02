@@ -42,7 +42,7 @@ async fn main() -> io::Result<()> {
         let route_table = route_table;
         while let Some(msg) = rx.recv().await {
             if let Some(route_table) = &route_table {
-                if let Some(target) = route_table.find_target(&msg.tag_url) {
+                if let Some(target) = route_table.find_target(&msg.tag) {
                     println!("[{}] 路由到目标: {}", truncate_tag(&msg.tag, TRUNCATE_LEN), target);
                     match dispatch_to_redis(&redis_client_clone, target, &msg).await {
                         Ok(_) => {
@@ -131,7 +131,23 @@ async fn main() -> io::Result<()> {
                                 }
                             }
                             Err(_e) => {
-                                // JSON 解析失败是预期中的，不是目标数据，不打印日志
+                                eprintln!("[{}] 数据解析为 JSON 失败，ID: {}", display_tag, id);
+                                if let Err(e) = tx.send(SaveMessage {
+                                    id: id.clone(),
+                                    tag: "error|".to_string() + &package.tag,
+                                    tag_app: package.tag_app.clone(),
+                                    tag_url: package.tag_url.clone(),
+                                    data: serde_json::json!({
+                                        "error": "invalid_json",
+                                        "app": package.tag_app,
+                                        "url": package.tag_url,
+                                        "message": data.iter().map(|&c| c as char).collect::<String>(),
+                                    }),
+                                }).await {
+                                    eprintln!("[!] 发送错误信息到队列失败: {}", e);
+                                } else {
+                                    println!("[{}] 错误信息已发送到分发队列，ID: {}", display_tag, id);
+                                }
                             }
                         }
                     }
