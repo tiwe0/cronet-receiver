@@ -1,17 +1,11 @@
-
-use serde::{Deserialize, Serialize, ser::SerializeStruct};
 use regex::Regex;
+use serde::{Deserialize, Serialize};
+use serde::ser::SerializeStruct;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ListenerConfig {
     pub host: String,
     pub port: u16,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct MongoConfig {
-    pub uri: String,
-    pub database: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -51,6 +45,7 @@ impl<'de> Deserialize<'de> for RouteEntry {
 
         let helper = RouteEntryHelper::deserialize(deserializer)?;
         let regex = Regex::new(&helper.pattern).map_err(serde::de::Error::custom)?;
+        println!("[*] 成功加载路由规则: pattern='{}', target='{}'", helper.pattern, helper.target);
         Ok(RouteEntry {
             pattern: regex,
             target: helper.target,
@@ -110,4 +105,12 @@ pub struct AppConfig {
     pub listener: ListenerConfig,
     pub redis: Option<RedisConfig>,
     pub route_table: Option<RouteTable>,
+}
+
+impl AppConfig {
+    pub fn load_from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let config_str = std::fs::read_to_string(path)?;
+        let config: AppConfig = serde_json::from_str(&config_str)?;
+        Ok(config)
+    }
 }

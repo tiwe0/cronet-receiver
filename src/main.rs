@@ -8,6 +8,7 @@ use crate::redis::{SaveMessage, dispatch_to_redis, setup_redis};
 
 use serde_json;
 
+use std::time::Duration;
 use std::{sync::Arc};
 
 use dashmap::DashMap;
@@ -19,6 +20,11 @@ use tokio::sync::mpsc;
 use tokio_util::codec::{Framed};
 use futures::StreamExt;
 
+use arc_swap::ArcSwap;
+use notify_debouncer_mini::{DebounceEventResult, new_debouncer, notify::*};
+use once_cell::sync::Lazy as LazyLock;
+
+
 struct AppState {
     tag_to_id: DashMap<String, String>,
     packages: DashMap<String, Vec<u8>>,
@@ -26,22 +32,56 @@ struct AppState {
 
 static TRUNCATE_LEN: usize = 50;
 
+static GLOBAL_APP_CONFIG: LazyLock<ArcSwap<AppConfig>> = LazyLock::new(|| {
+    ArcSwap::from_pointee(AppConfig::load_from_file("config.json").expect("读取配置文件失败"))
+});
+
 #[tokio::main]
 async fn main() -> io::Result<()> {
-    let app_config: AppConfig = serde_json::from_str(std::fs::read_to_string("config.json").expect("读取配置文件失败").as_str()).expect("解析配置文件失败");
+    let app_config = GLOBAL_APP_CONFIG.load().as_ref().clone();
+
     let redis_client = setup_redis(&app_config).await.expect("无法连接到 Redis");
     println!("[*] 成功连接到 Redis 服务器");
     println!("[*] Redis 地址: {}:{}", app_config.redis.as_ref().unwrap().host, app_config.redis.as_ref().unwrap().port);
 
     let (tx, mut rx) = mpsc::channel::<SaveMessage>(1024);
+
+    // 热重载部分
+    let mut debouncer = new_debouncer(
+        Duration::from_millis(500), 
+        |res: DebounceEventResult| {
+            match res {
+                Ok(events) => {
+                    let target_file_str = "config.json";
+                    let has_change = events.iter().any(|e|{
+                        e.path.to_string_lossy().ends_with(target_file_str)
+                    });
+                    if has_change {
+                        match AppConfig::load_from_file(target_file_str) {
+                            Ok(new_config) => {
+                                GLOBAL_APP_CONFIG.store(Arc::new(new_config));
+                                println!("[*] 配置文件已重新加载");
+                            }
+                            Err(e) => {
+                                eprintln!("[!] 重新加载配置文件失败: {:?}", e);
+                            }
+                        }
+                    }
+                }
+                Err(e) => println!("[!] 监控配置文件变更时出错: {:?}", e),
+            }
+        }
+    ).expect("无法初始化文件变更监控器");
+
+    let _ = debouncer.watcher().watch(std::path::Path::new("config.json"), RecursiveMode::NonRecursive);
+    println!("[*] 配置变更监控已启动");
     
     // 这个协程用于从队列中读取信息并分发
-    let route_table = app_config.route_table.clone();
     let redis_client_clone = redis_client.clone();
     tokio::spawn(async move {
-        let route_table = route_table;
         while let Some(msg) = rx.recv().await {
-            if let Some(route_table) = &route_table {
+            let app_config = GLOBAL_APP_CONFIG.load();
+            if let Some(route_table) = &app_config.route_table {
                 if let Some(target) = route_table.find_target(&msg.tag) {
                     println!("[{}] 路由到目标: {}", truncate_tag(&msg.tag, TRUNCATE_LEN), target);
                     match dispatch_to_redis(&redis_client_clone, target, &msg).await {

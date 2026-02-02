@@ -12,7 +12,7 @@
         "enabled": true,
         "entries": [
             {
-                "pattern": "com.example.app|https://api.example.com/v1/(.*)",
+                "pattern": "com\\.example\\.app\\|https://api.example.com/v1/(.*)",
                 "target": "example:v1:{1}"
             }
         ]
